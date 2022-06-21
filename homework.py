@@ -69,15 +69,15 @@ def get_api_answer(current_timestamp):
 
 def check_response(response):
     """Функция проверки полученного ответа на корректность."""
-    if type(response) != dict:
+    if isinstance(response, list):
         response = response[0]
-    if response == {}:
+    if response == {} or response is None:
         raise EmptyAnswerException(
             'Яндекс вернул пустой ответ'
         )
     if 'homeworks' in response:
         homeworks = response.get('homeworks')
-        if type(homeworks) != list:
+        if not isinstance(homeworks, list):
             raise WrongAnswerException(
                 'Тип homeworks отличен от списка'
             )
@@ -85,7 +85,7 @@ def check_response(response):
             for key in work:
                 if key not in HOMEWORK_SCHEME:
                     logging.error(f'Ключ "{key}" не соответствует схеме')
-                elif type(work[key]) != HOMEWORK_SCHEME[key]:
+                elif not isinstance(work[key], HOMEWORK_SCHEME[key]):
                     logging.error(f'Тип ключа "{key}" не соответствует схеме')
         return homeworks
     raise KeyError(
@@ -118,7 +118,6 @@ def main():
         raise NoTokensException('Не все токены заданы в переменных окружения')
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
     current_timestamp = int(time.time())
-    current_timestamp = 1
     old_statuses = {}
     while True:
         try:
@@ -137,11 +136,10 @@ def main():
                         send_message(bot, message)
                 old_statuses = statuses
             current_timestamp = int(time.time())
-            time.sleep(RETRY_TIME)
-
         except Exception as error:
             message = f'Сбой в работе программы: {error}'
             logging.exception(message)
+        finally:
             time.sleep(RETRY_TIME)
 
 
