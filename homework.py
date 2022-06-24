@@ -153,7 +153,7 @@ def main():
     bot_logger.setLevel(DEBUG_DICT[DEBUG_LEVEL])
     handler_console = logging.StreamHandler(stream=sys.stdout)
     handler_console.setFormatter(
-        logging.Formatter('%(asctime)s, %(levelname)s, %(message)s'))
+        logging.Formatter('%(asctime)s  %(levelname)s: %(message)s'))
     bot_logger.addHandler(handler_console)
     if not check_tokens():
         return
