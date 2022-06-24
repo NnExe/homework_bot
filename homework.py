@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import requests
 import telegram
@@ -7,7 +8,6 @@ from exceptions import (
     InaccessibilityEndpointException,
     EmptyAnswerException,
     WrongAnswerException,
-    NoTokensException
 )
 
 from dotenv import load_dotenv
@@ -19,6 +19,7 @@ load_dotenv()
 PRACTICUM_TOKEN = os.getenv('PRACTICUM_TOKEN')
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
+DEBUG_LEVEL = os.getenv('DEBUG_LEVEL') or 'INFO'
 
 RETRY_TIME = 60
 ENDPOINT = 'https://practicum.yandex.ru/api/user_api/homework_statuses/'
@@ -38,6 +39,31 @@ HOMEWORK_STATUSES = {
     'reviewing': 'Работа взята на проверку ревьюером.',
     'rejected': 'Работа проверена: у ревьюера есть замечания.'
 }
+
+DEBUG_DICT = {
+    'DEBUG': logging.DEBUG,
+    'INFO': logging.INFO,
+    'WARNING': logging.WARNING,
+    'ERROR': logging.ERROR,
+    'CRITICAL': logging.CRITICAL,
+}
+
+
+class TelegramBotHandler(logging.Handler):
+    """Хэндлер для отправки логов в телеграмм."""
+
+    def __init__(self, bot):
+        """Добавилась переменная bot."""
+        super().__init__()
+        self.bot = bot
+
+    def emit(self, record: logging.LogRecord):
+        """
+        Собственно отправка сообщения в телеграмм.
+        Если уровеньлоггирования ERROR или выше.
+        """
+        if record.levelno >= logging.ERROR:
+            send_message(self.bot, self.format(record))
 
 
 def send_message(bot, message):
@@ -86,7 +112,8 @@ def check_response(response):
                 if key not in HOMEWORK_SCHEME:
                     logging.error(f'Ключ "{key}" не соответствует схеме')
                 elif not isinstance(work[key], HOMEWORK_SCHEME[key]):
-                    logging.error(f'Тип ключа "{key}" не соответствует схеме')
+                    logging.error(
+                        f'Тип ключа "{key}" не соответствует схеме')
         return homeworks
     raise KeyError(
         'Отсутствует ключ homeworks'
@@ -108,16 +135,27 @@ def check_tokens():
     """Функция проверки того, что токены непустые."""
     tokens = all((PRACTICUM_TOKEN, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID))
     if not tokens:
-        logging.critical("Не заданы переменные окружения (токены/telegram_id")
+        logging.critical(
+            "Не заданы переменные окружения (токены/telegram_id")
     return tokens
 
 
 def main():
     """Основная логика работы бота."""
+    bot_logger = logging.getLogger()
+    bot_logger.setLevel(DEBUG_DICT[DEBUG_LEVEL])
+    handler_console = logging.StreamHandler(stream=sys.stdout)
+    handler_console.setFormatter(
+        logging.Formatter('%(asctime)s, %(levelname)s, %(message)s'))
+    bot_logger.addHandler(handler_console)
     if not check_tokens():
-        raise NoTokensException('Не все токены заданы в переменных окружения')
+        return
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
-    current_timestamp = int(time.time())
+    handler_telegramm = TelegramBotHandler(bot)
+    handler_telegramm.setFormatter(
+        logging.Formatter('%(asctime)s, %(levelname)s, %(message)s'))
+    bot_logger.addHandler(handler_telegramm)
+    current_timestamp = 1
     old_statuses = {}
     while True:
         try:
@@ -138,14 +176,14 @@ def main():
             current_timestamp = int(time.time())
         except Exception as error:
             message = f'Сбой в работе программы: {error}'
-            logging.exception(message)
+            logging.error(message)
         finally:
             time.sleep(RETRY_TIME)
 
 
 if __name__ == '__main__':
-    logging.basicConfig(
-        level=logging.INFO,
+    """logging.basicConfig(
+        level=DEBUG_DICT[DEBUG_LEVEL],
         format='%(asctime)s, %(levelname)s, %(message)s'
-    )
+    )"""
     main()
