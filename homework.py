@@ -48,8 +48,7 @@ DEBUG_DICT = {
     'CRITICAL': logging.CRITICAL,
 }
 
-ERROR_CONNECTIONS = 0
-CONNECT_ERROR = False
+LAST_ERROR = ''
 
 
 class TelegramBotHandler(logging.Handler):
@@ -63,11 +62,15 @@ class TelegramBotHandler(logging.Handler):
     def emit(self, record: logging.LogRecord):
         """
         Собственно отправка сообщения в телеграмм.
-        Если уровеньлоггирования ERROR или выше.
+        Если уровеньлоггирования ERROR или выше и
+        при этом последняя ошибка не ошибка подключения, или это 1
+        по счету ошибка подключения.
         """
+        global LAST_ERROR
         if (record.levelno >= logging.ERROR
-           and (ERROR_CONNECTIONS <= 1 or not CONNECT_ERROR)):
+           and LAST_ERROR != record.message):
             send_message(self.bot, self.format(record))
+        LAST_ERROR = record.message
 
 
 def send_message(bot, message):
@@ -82,24 +85,18 @@ def send_message(bot, message):
 
 def get_api_answer(current_timestamp):
     """Функция получения ответа от яндекс API."""
-    global ERROR_CONNECTIONS, CONNECT_ERROR
     timestamp = current_timestamp or int(time.time())
     params = {'from_date': timestamp}
     headers = {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
     try:
         answer = requests.get(ENDPOINT, headers=headers, params=params)
     except Exception as error:
-        ERROR_CONNECTIONS += 1
-        CONNECT_ERROR = True
         logging.error(f'Ошибка "{error}" при попытке подключения к яндексу')
     else:
         if answer.status_code != 200:
-            CONNECT_ERROR = True
-            ERROR_CONNECTIONS += 1
             raise InaccessibilityEndpointException(
                 f'Яндекс вернул код {answer.status_code}, отличный от 200'
             )
-        ERROR_CONNECTIONS = 0
         return answer.json()
 
 
@@ -152,7 +149,6 @@ def check_tokens():
 
 def main():
     """Основная логика работы бота."""
-    global CONNECT_ERROR
     bot_logger = logging.getLogger()
     bot_logger.setLevel(DEBUG_DICT[DEBUG_LEVEL])
     handler_console = logging.StreamHandler(stream=sys.stdout)
@@ -188,14 +184,9 @@ def main():
         except Exception as error:
             message = f'Сбой в работе программы: {error}'
             logging.error(message)
-            CONNECT_ERROR = False
         finally:
             time.sleep(RETRY_TIME)
 
 
 if __name__ == '__main__':
-    """logging.basicConfig(
-        level=DEBUG_DICT[DEBUG_LEVEL],
-        format='%(asctime)s, %(levelname)s, %(message)s'
-    )"""
     main()
