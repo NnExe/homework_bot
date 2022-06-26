@@ -9,6 +9,7 @@ from exceptions import (
     EmptyAnswerException,
     WrongAnswerException,
 )
+from typing import Union, List, Dict, Type
 
 from dotenv import load_dotenv
 
@@ -48,13 +49,34 @@ DEBUG_DICT = {
     'CRITICAL': logging.CRITICAL,
 }
 
-LAST_ERROR = ''
+LOGGING_FORMAT = '%(asctime)s  %(levelname)s: %(message)s'
+
+last_error: str = ''
+
+
+def handler_init(handler_type: Type[logging.Handler],
+                 level: int, format: str, *args, **kwargs) -> logging.Handler:
+    """Инициализация хендлера логирования."""
+    handler = handler_type(*args, **kwargs)
+    handler.setLevel(level)
+    handler.setFormatter(logging.Formatter(format))
+    return handler
+
+
+bot_logger = logging.getLogger()
+handler_console = handler_init(
+    logging.StreamHandler,
+    DEBUG_DICT[DEBUG_LEVEL],
+    LOGGING_FORMAT,
+    stream=sys.stdout
+)
+bot_logger.addHandler(handler_console)
 
 
 class TelegramBotHandler(logging.Handler):
     """Хэндлер для отправки логов в телеграмм."""
 
-    def __init__(self, bot):
+    def __init__(self, bot: telegram.Bot):
         """Добавилась переменная bot."""
         super().__init__()
         self.bot = bot
@@ -62,36 +84,36 @@ class TelegramBotHandler(logging.Handler):
     def emit(self, record: logging.LogRecord):
         """
         Собственно отправка сообщения в телеграмм.
-        Если уровеньлоггирования ERROR или выше и
-        при этом последняя ошибка не ошибка подключения, или это 1
-        по счету ошибка подключения.
+        Если уровень логгирования ERROR или выше и
+        при этом последняя ошибка не совпадает с текущей.
         """
-        global LAST_ERROR
-        if (record.levelno >= logging.ERROR
-           and LAST_ERROR != record.message):
+        global last_error
+        if last_error != record.message:
             send_message(self.bot, self.format(record))
-        LAST_ERROR = record.message
+        last_error = record.message
 
 
-def send_message(bot, message):
+def send_message(bot: telegram.Bot, message: str) -> None:
     """Функция отправки сообщений в телеграмм."""
+    global bot_logger
     try:
         bot.send_message(TELEGRAM_CHAT_ID, message)
     except Exception as error:
-        logging.error(f'Ошибка "{error}" при попытке отправки сообщения')
+        bot_logger.error(f'Ошибка "{error}" при попытке отправки сообщения')
     else:
-        logging.info(f"Сообщение '{message}' отправлено")
+        bot_logger.info(f"Сообщение '{message}' отправлено")
 
 
-def get_api_answer(current_timestamp):
+def get_api_answer(current_timestamp: int) -> Union[List[dict], dict]:
     """Функция получения ответа от яндекс API."""
+    global bot_logger
     timestamp = current_timestamp or int(time.time())
     params = {'from_date': timestamp}
     headers = {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
     try:
         answer = requests.get(ENDPOINT, headers=headers, params=params)
     except Exception as error:
-        logging.error(f'Ошибка "{error}" при попытке подключения к яндексу')
+        bot_logger.error(f'Ошибка "{error}" при попытке подключения к яндексу')
     else:
         if answer.status_code != 200:
             raise InaccessibilityEndpointException(
@@ -100,8 +122,10 @@ def get_api_answer(current_timestamp):
         return answer.json()
 
 
-def check_response(response):
+def check_response(response: Union[List[dict], dict]
+                   ) -> List[Dict[str, Union[str, int]]]:
     """Функция проверки полученного ответа на корректность."""
+    global bot_logger
     if isinstance(response, list):
         response = response[0]
     if response == {} or response is None:
@@ -117,9 +141,9 @@ def check_response(response):
         for work in homeworks:
             for key in work:
                 if key not in HOMEWORK_SCHEME:
-                    logging.error(f'Ключ "{key}" не соответствует схеме')
+                    bot_logger.error(f'Ключ "{key}" не соответствует схеме')
                 elif not isinstance(work[key], HOMEWORK_SCHEME[key]):
-                    logging.error(
+                    bot_logger.error(
                         f'Тип ключа "{key}" не соответствует схеме')
         return homeworks
     raise KeyError(
@@ -127,40 +151,40 @@ def check_response(response):
     )
 
 
-def parse_status(homework):
+def parse_status(homework: Dict[str, Union[str, int]]) -> str:
     """Функция получает строку для отправки в телеграмм на базе ответа."""
+    global bot_logger
     homework_name = homework.get('homework_name')
     homework_status = homework.get('status')
     if homework_status not in HOMEWORK_STATUSES:
-        logging.error(
+        bot_logger.error(
             f'Недокументированный статус работы: "{homework_status}"')
     verdict = HOMEWORK_STATUSES[homework_status]
     return f'Изменился статус проверки работы "{homework_name}". {verdict}'
 
 
-def check_tokens():
+def check_tokens() -> bool:
     """Функция проверки того, что токены непустые."""
+    global bot_logger
     tokens = all((PRACTICUM_TOKEN, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID))
     if not tokens:
-        logging.critical(
-            "Не заданы переменные окружения (токены/telegram_id")
+        bot_logger.critical(
+            "Не заданы переменные окружения (токены/telegram_id)")
     return tokens
 
 
-def main():
+def main() -> None:
     """Основная логика работы бота."""
-    bot_logger = logging.getLogger()
-    bot_logger.setLevel(DEBUG_DICT[DEBUG_LEVEL])
-    handler_console = logging.StreamHandler(stream=sys.stdout)
-    handler_console.setFormatter(
-        logging.Formatter('%(asctime)s  %(levelname)s: %(message)s'))
-    bot_logger.addHandler(handler_console)
+    global bot_logger
     if not check_tokens():
         return
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
-    handler_telegramm = TelegramBotHandler(bot)
-    handler_telegramm.setFormatter(
-        logging.Formatter('%(asctime)s, %(levelname)s, %(message)s'))
+    handler_telegramm = handler_init(
+        TelegramBotHandler,
+        logging.ERROR,
+        LOGGING_FORMAT,
+        bot=bot
+    )
     bot_logger.addHandler(handler_telegramm)
     current_timestamp = int(time.time())
     old_statuses = {}
